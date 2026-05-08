@@ -334,12 +334,12 @@ function updatePlayer() {
   if (state.keys['w'] && p.onGround && !p.jumpConsumed) {
     p.vy = jvy; p.onGround = false; p.jumpConsumed = true;
   }
-  // Wall jump — fires on W press while airborne and touching any wall
+  // Wall jump — W + D while on left wall, or W + A while on right wall
   if (state.keys['w'] && !p.onGround && !p.jumpConsumed) {
-    if (p.touchingWallLeft) {
+    if (p.wallSliding && p.touchingWallLeft && state.keys['d']) {
       p.vy = jvy; p.vx = WALL_JUMP_VX; p.jumpConsumed = true;
       p.facingRight = true;
-    } else if (p.touchingWallRight) {
+    } else if (p.wallSliding && p.touchingWallRight && state.keys['a']) {
       p.vy = jvy; p.vx = -WALL_JUMP_VX; p.jumpConsumed = true;
       p.facingRight = false;
     }
