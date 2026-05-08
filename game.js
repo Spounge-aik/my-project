@@ -195,11 +195,10 @@ canvas.addEventListener('mousedown', e => {
   const angle  = Math.atan2(state.mouse.y - cy, state.mouse.x - cx);
   const spread = 0.15;
   const mkB = ang => ({ x: cx, y: cy, vx: Math.cos(ang) * BULLET_SPEED, vy: Math.sin(ang) * BULLET_SPEED, distTraveled: 0 });
-  if (p.activeBoosts.doubleBullet > 0) {
-    state.bullets.push(mkB(angle - spread / 2));
-    state.bullets.push(mkB(angle + spread / 2));
-  } else {
-    state.bullets.push(mkB(angle));
+  const count = 1 + p.activeBoosts.doubleBullet; // stacks: 1, 2, 3, 4…
+  for (let i = 0; i < count; i++) {
+    const offset = count > 1 ? -spread / 2 + (i / (count - 1)) * spread : 0;
+    state.bullets.push(mkB(angle + offset));
   }
   state.shootCooldown = 15;
   setPlayerAnim('attack');
@@ -334,12 +333,12 @@ function updatePlayer() {
   if (state.keys['w'] && p.onGround && !p.jumpConsumed) {
     p.vy = jvy; p.onGround = false; p.jumpConsumed = true;
   }
-  // Wall jump — W + D while on left wall, or W + A while on right wall
+  // Wall jump — W + D off left wall, W + A off right wall
   if (state.keys['w'] && !p.onGround && !p.jumpConsumed) {
-    if (p.wallSliding && p.touchingWallLeft && state.keys['d']) {
+    if (p.touchingWallLeft && state.keys['d']) {
       p.vy = jvy; p.vx = WALL_JUMP_VX; p.jumpConsumed = true;
       p.facingRight = true;
-    } else if (p.wallSliding && p.touchingWallRight && state.keys['a']) {
+    } else if (p.touchingWallRight && state.keys['a']) {
       p.vy = jvy; p.vx = -WALL_JUMP_VX; p.jumpConsumed = true;
       p.facingRight = false;
     }
@@ -347,8 +346,8 @@ function updatePlayer() {
 
   applyPhysicsPlayer();
 
-  const presL = !!state.keys['a'], presR = !!state.keys['d'];
-  p.wallSliding = ((p.touchingWallLeft && presL) || (p.touchingWallRight && presR)) && !p.onGround && p.vy > 0;
+  // Wall slide activates automatically whenever touching a wall while falling
+  p.wallSliding = (p.touchingWallLeft || p.touchingWallRight) && !p.onGround && p.vy > 0;
   if (p.wallSliding && p.vy > WALL_SLIDE_SPEED) p.vy = WALL_SLIDE_SPEED;
 
   // Advance animation
@@ -503,7 +502,8 @@ function updatePowerups() {
     const pu = state.powerups[i];
     pu.bob = (pu.bob + 0.05) % (Math.PI * 2);
     if (rectsOverlap(pl.x, pl.y, PLAYER_W, PLAYER_H, pu.x, pu.y, POWERUP_W, POWERUP_H)) {
-      pl.activeBoosts[pu.type] = POWERUP_DURATION;
+      if (pu.type === 'doubleBullet') pl.activeBoosts.doubleBullet++;
+      else pl.activeBoosts[pu.type] = POWERUP_DURATION;
       toRemove.push(i);
     }
   }
@@ -729,19 +729,18 @@ function render() {
   // Active power-up HUD
   const boosts = p.activeBoosts;
   const puHud = [
-    { key: 'doubleBullet', label: '2x SHOT', fill: '#00ffff', bar: '#006666', bg: 'rgba(0,255,255,0.12)' },
-    { key: 'speedBoost',   label: 'SPEED',   fill: '#ffff00', bar: '#666600', bg: 'rgba(255,255,0,0.12)'  },
-    { key: 'higherJump',   label: 'JUMP+',   fill: '#00ff66', bar: '#006633', bg: 'rgba(0,255,102,0.12)' },
+    { key: 'doubleBullet', label: `${1 + boosts.doubleBullet}x SHOT`, fill: '#00ffff', bg: 'rgba(0,255,255,0.12)' },
+    { key: 'speedBoost',   label: 'SPEED',                             fill: '#ffff00', bg: 'rgba(255,255,0,0.12)'  },
+    { key: 'higherJump',   label: 'JUMP+',                             fill: '#00ff66', bg: 'rgba(0,255,102,0.12)' },
   ];
   let hx = 10; const hy = CANVAS_H - 38;
   ctx.font = 'bold 11px monospace';
   for (const d of puHud) {
     const rem = boosts[d.key]; if (rem <= 0) continue;
     const w = 62;
-    ctx.fillStyle = d.bg; ctx.fillRect(hx, hy, w, 22);
+    ctx.fillStyle = d.bg;   ctx.fillRect(hx, hy, w, 22);
     ctx.fillStyle = d.fill; ctx.fillText(d.label, hx + 4, hy + 15);
-    ctx.fillStyle = d.bar;  ctx.fillRect(hx, hy + 22, w, 3);
-    ctx.fillStyle = d.fill; ctx.fillRect(hx, hy + 22, w * (rem / POWERUP_DURATION), 3);
+    ctx.fillStyle = d.fill; ctx.fillRect(hx, hy + 22, w, 3); // full bar — permanent
     hx += w + 6;
   }
 
