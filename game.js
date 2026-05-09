@@ -37,6 +37,9 @@ const POWERUP_W        = 26;
 const POWERUP_H        = 26;
 const POWERUP_DURATION = 600;
 
+// Flask spritesheet rows (top→bottom): doubleBullet, higherJump, speedBoost
+const FLASK_ROW = { doubleBullet: 0, higherJump: 1, speedBoost: 2 };
+
 // ── Animation Configs ──────────────────────────────────────────────────────
 // sheet assigned after images load
 const PLAYER_ANIMS = {
@@ -129,6 +132,7 @@ let imgsLoaded = 0;
 const IMG_KEYS = [
   'playerIdle', 'playerRun', 'playerAttack', 'playerHurt',
   'demonIdle', 'demonFlying', 'demonAttack', 'demonHurt', 'demonDeath', 'fireball',
+  'background', 'flasks',
 ];
 
 function loadImg(key, src) {
@@ -348,7 +352,10 @@ function updatePlayer() {
 
   // Wall slide activates automatically whenever touching a wall while falling
   p.wallSliding = (p.touchingWallLeft || p.touchingWallRight) && !p.onGround && p.vy > 0;
-  if (p.wallSliding && p.vy > WALL_SLIDE_SPEED) p.vy = WALL_SLIDE_SPEED;
+  if (p.wallSliding) {
+    if (p.vy > WALL_SLIDE_SPEED) p.vy = WALL_SLIDE_SPEED;
+    p.jumpConsumed = false; // reset so player can wall jump even after a ground jump
+  }
 
   // Advance animation
   const pa = p.anim;
@@ -619,25 +626,30 @@ function render() {
   const room = ROOMS[state.roomIndex];
   const p    = state.player;
 
-  ctx.fillStyle = room.bgColor;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  // Background with subtle parallax: image is drawn wider than canvas and shifted by player position
+  if (imgs.background?.complete) {
+    const parallaxX = -(p.x / CANVAS_W) * 100;
+    ctx.drawImage(imgs.background, parallaxX, 0, CANVAS_W + 100, CANVAS_H);
+  } else {
+    ctx.fillStyle = '#1a0a00';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  }
 
-  ctx.fillStyle = room.groundColor;
+  // Ground — semi-transparent dark overlay so lava in bg shows through
+  ctx.fillStyle = 'rgba(15, 5, 0, 0.55)';
   ctx.fillRect(0, GROUND_Y, CANVAS_W, CANVAS_H - GROUND_Y);
-  ctx.fillStyle = '#7a7aae';
+  ctx.fillStyle = '#cc4400';
   ctx.fillRect(0, GROUND_Y, CANVAS_W, 3);
 
   for (const plat of room.platforms) {
     const isWall = plat.h > plat.w;
-    ctx.fillStyle = isWall ? '#363660' : '#4a4a7e';
+    ctx.fillStyle = isWall ? '#2a1008' : '#3a1a08';
     ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
-    ctx.fillStyle = '#8a8abe';
+    ctx.fillStyle = '#cc5500';
     if (isWall) {
-      // Highlight left and right edges
       ctx.fillRect(plat.x, plat.y, 3, plat.h);
       ctx.fillRect(plat.x + plat.w - 3, plat.y, 3, plat.h);
     } else {
-      // Highlight top edge
       ctx.fillRect(plat.x, plat.y, plat.w, 3);
     }
   }
@@ -649,23 +661,24 @@ function render() {
   if (!state.roomCleared) {
     ctx.fillStyle = '#cc9900'; ctx.fillRect(door.x + 5, door.y + 22, 10, 12);
     ctx.fillStyle = '#ffcc00'; ctx.fillRect(door.x + 6, door.y + 32, 8, 8);
-    ctx.fillStyle = room.bgColor;
+    ctx.fillStyle = '#1a0a00';
     ctx.beginPath(); ctx.arc(door.x + 10, door.y + 24, 4, 0, Math.PI * 2); ctx.fill();
   }
 
   // Power-ups
-  const puColors = { doubleBullet: '#00ffff', speedBoost: '#ffff00', higherJump: '#00ff66' };
-  const puLabels = { doubleBullet: '2x', speedBoost: 'SPD', higherJump: 'JMP' };
-  ctx.font = 'bold 9px monospace';
   for (const pu of state.powerups) {
     const by = Math.sin(pu.bob) * 4;
-    ctx.fillStyle = puColors[pu.type];
-    ctx.fillRect(pu.x, pu.y + by, POWERUP_W, POWERUP_H);
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-    ctx.strokeRect(pu.x, pu.y + by, POWERUP_W, POWERUP_H);
-    ctx.fillStyle = '#000'; ctx.textAlign = 'center';
-    ctx.fillText(puLabels[pu.type], pu.x + POWERUP_W / 2, pu.y + by + 17);
-    ctx.textAlign = 'left';
+    if (imgs.flasks?.complete) {
+      const row = FLASK_ROW[pu.type];
+      const srcH = imgs.flasks.naturalHeight / 3;
+      const srcW = imgs.flasks.naturalWidth;
+      const dh = 52, dw = Math.round(52 * srcW / srcH);
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.drawImage(imgs.flasks, 0, row * srcH, srcW, srcH,
+        pu.x + POWERUP_W / 2 - dw / 2, pu.y + by - dh + POWERUP_H, dw, dh);
+      ctx.restore();
+    }
   }
 
   // Enemies (sprite, aspect-correct)
@@ -726,22 +739,29 @@ function render() {
 
   ctx.globalAlpha = 1;
 
-  // Active power-up HUD
+  // Active power-up HUD — flask icons
   const boosts = p.activeBoosts;
-  const puHud = [
-    { key: 'doubleBullet', label: `${1 + boosts.doubleBullet}x SHOT`, fill: '#00ffff', bg: 'rgba(0,255,255,0.12)' },
-    { key: 'speedBoost',   label: 'SPEED',                             fill: '#ffff00', bg: 'rgba(255,255,0,0.12)'  },
-    { key: 'higherJump',   label: 'JUMP+',                             fill: '#00ff66', bg: 'rgba(0,255,102,0.12)' },
-  ];
-  let hx = 10; const hy = CANVAS_H - 38;
-  ctx.font = 'bold 11px monospace';
-  for (const d of puHud) {
-    const rem = boosts[d.key]; if (rem <= 0) continue;
-    const w = 62;
-    ctx.fillStyle = d.bg;   ctx.fillRect(hx, hy, w, 22);
-    ctx.fillStyle = d.fill; ctx.fillText(d.label, hx + 4, hy + 15);
-    ctx.fillStyle = d.fill; ctx.fillRect(hx, hy + 22, w, 3); // full bar — permanent
-    hx += w + 6;
+  if (imgs.flasks?.complete) {
+    const srcH = imgs.flasks.naturalHeight / 3;
+    const srcW = imgs.flasks.naturalWidth;
+    const dh = 40, dw = Math.round(40 * srcW / srcH);
+    let hx = 10; const hy = CANVAS_H - 46;
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    for (const key of ['doubleBullet', 'speedBoost', 'higherJump']) {
+      if (boosts[key] <= 0) continue;
+      const row = FLASK_ROW[key];
+      ctx.drawImage(imgs.flasks, 0, row * srcH, srcW, srcH, hx, hy, dw, dh);
+      if (key === 'doubleBullet' && boosts.doubleBullet > 1) {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`x${1 + boosts.doubleBullet}`, hx + dw - 14, hy + dh - 2);
+        ctx.globalCompositeOperation = 'screen';
+      }
+      hx += dw + 4;
+    }
+    ctx.restore();
   }
 
   updateHUD();
@@ -784,3 +804,5 @@ loadImg('demonAttack',  'Sprites/NPC Sprites/Flying Demon/Sprites/with_outline/A
 loadImg('demonHurt',    'Sprites/NPC Sprites/Flying Demon/Sprites/with_outline/HURT.png');
 loadImg('demonDeath',   'Sprites/NPC Sprites/Flying Demon/Sprites/with_outline/DEATH.png');
 loadImg('fireball',     'Sprites/NPC Sprites/Flying Demon/Sprites/projectile.png');
+loadImg('background',   'Background/146Z_2107.w026.n002.565B.p1.565.jpg');
+loadImg('flasks',       'Sprites/Items/Flasks.png');
